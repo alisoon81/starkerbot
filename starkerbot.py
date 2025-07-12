@@ -1,64 +1,291 @@
 import os
 import logging
-import asyncio
-from quart import Quart, request, Response
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import Update
+from aiogram import Bot, Dispatcher, executor, types
 
-API_TOKEN = os.getenv("API_TOKEN")  # توکن ربات از متغیر محیطی خوانده میشه
-WEBHOOK_PATH = f"/webhook/{API_TOKEN}"
-WEBHOOK_URL = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}{WEBHOOK_PATH}"
+API_TOKEN = os.getenv("API_TOKEN")  # توکن ربات
 
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
-app = Quart(__name__)
 
-user_languages = {}
+# دیتاست‌ها (در حافظه)
+user_data = {}  # user_id: {lang, balance, deposits, referrals, referral_deposits}
+referrals = {}  # user_id: set of referred user_ids
 
+# زبان‌ها و پیام‌ها
 LANGUAGES = {
     "en": "English 🇺🇸",
     "zh": "中文 🇨🇳",
     "ru": "Русский 🇷🇺"
 }
 
-WELCOME_MESSAGES = {
-    "en": "Welcome! You chose English 🇺🇸",
-    "zh": "欢迎！你选择了中文 🇨🇳",
-    "ru": "Добро пожаловать! Вы выбрали русский 🇷🇺"
+MESSAGES = {
+    "choose_language": {
+        "en": "Please select your language:",
+        "zh": "请选择您的语言：",
+        "ru": "Пожалуйста, выберите язык:"
+    },
+    "welcome": {
+        "en": "Welcome! You chose English 🇺🇸",
+        "zh": "欢迎！你选择了中文 🇨🇳",
+        "ru": "Добро пожаловать! Вы выбрали русский 🇷🇺"
+    },
+    "main_menu": {
+        "en": "Choose an option:",
+        "zh": "选择一个选项：",
+        "ru": "Выберите опцию:"
+    },
+    "deposit_prompt": {
+        "en": "Enter amount of Stars to deposit:",
+        "zh": "输入充值的星星数量：",
+        "ru": "Введите количество Звезд для пополнения:"
+    },
+    "market_prompt_price": {
+        "en": "Enter price range to buy (min max):",
+        "zh": "输入购买价格范围（最小 最大）：",
+        "ru": "Введите ценовой диапазон для покупки (мин макс):"
+    },
+    "market_prompt_quantity": {
+        "en": "Enter quantity to buy:",
+        "zh": "输入购买数量：",
+        "ru": "Введите количество для покупки:"
+    },
+    "withdraw_prompt": {
+        "en": "Enter amount of Stars to withdraw:",
+        "zh": "输入要提取的星星数量：",
+        "ru": "Введите количество Звезд для вывода:"
+    },
+    "deposit_success": {
+        "en": "You deposited {amount} Stars. Your balance is now {balance}.",
+        "zh": "您充值了 {amount} 星星。您的余额现在是 {balance}。",
+        "ru": "Вы пополнили {amount} Звезд. Ваш баланс теперь {balance}."
+    },
+    "withdraw_success": {
+        "en": "Withdrawal request for {amount} Stars registered.",
+        "zh": "提现请求已注册，数量：{amount} 星星。",
+        "ru": "Запрос на вывод {amount} Звезд зарегистрирован."
+    },
+    "market_confirm": {
+        "en": "You requested to buy {quantity} gifts in price range {min_price} - {max_price}. Purchase will be done manually.",
+        "zh": "您请求购买价格范围 {min_price} - {max_price} 内的 {quantity} 个礼物。购买将手动完成。",
+        "ru": "Вы запросили покупку {quantity} подарков в ценовом диапазоне {min_price} - {max_price}. Покупка будет выполнена вручную."
+    },
+    "profile_info": {
+        "en": "Your balance: {balance} Stars\nDeposited: {deposits} Stars\nReferrals: {ref_count}\nReferral deposits: {ref_deposits} Stars\nReferral bonus (2%): {bonus} Stars (not withdrawable)",
+        "zh": "您的余额：{balance} 星星\n充值总额：{deposits} 星星\n邀请人数：{ref_count}\n邀请充值总额：{ref_deposits} 星星\n邀请奖励（2%）：{bonus} 星星（不可提现）",
+        "ru": "Ваш баланс: {balance} Звезд\nВнесено: {deposits} Звезд\nРефералы: {ref_count}\nРеферальные депозиты: {ref_deposits} Звезд\nРеферальный бонус (2%): {bonus} Звезд (не выводится)"
+    },
+    "invalid_input": {
+        "en": "Invalid input. Please try again.",
+        "zh": "输入无效，请重试。",
+        "ru": "Неверный ввод. Пожалуйста, попробуйте снова."
+    }
 }
 
-@dp.message_handler(commands=['start'])
-async def send_welcome(message: types.Message):
-    keyboard = types.InlineKeyboardMarkup(row_width=3)
-    buttons = [types.InlineKeyboardButton(text=lang, callback_data=f"lang_{code}") for code, lang in LANGUAGES.items()]
+# ذخیره حالت‌های مکالمه (state) برای ورودی کاربر
+user_states = {}  # user_id: current state, and temp data
+
+
+# استیت‌ها
+STATE_NONE = 0
+STATE_DEPOSIT = 1
+STATE_MARKET_PRICE = 2
+STATE_MARKET_QUANTITY = 3
+STATE_WITHDRAW = 4
+
+def get_user_data(user_id):
+    if user_id not in user_data:
+        user_data[user_id] = {
+            "lang": None,
+            "balance": 0,
+            "deposits": 0,
+            "referrals": set(),
+            "referral_deposits": 0
+        }
+    return user_data[user_id]
+
+def get_message(user_id, key, **kwargs):
+    lang = get_user_data(user_id).get("lang") or "en"
+    text = MESSAGES.get(key, {}).get(lang, "")
+    if kwargs:
+        return text.format(**kwargs)
+    return text
+
+def main_menu_keyboard(lang):
+    buttons = [
+        types.InlineKeyboardButton(text={"en":"Deposit","zh":"充值","ru":"Внести"}[lang], callback_data="menu_deposit"),
+        types.InlineKeyboardButton(text={"en":"Market","zh":"市场","ru":"Маркет"}[lang], callback_data="menu_market"),
+        types.InlineKeyboardButton(text={"en":"Withdraw","zh":"提现","ru":"Вывести"}[lang], callback_data="menu_withdraw"),
+        types.InlineKeyboardButton(text={"en":"Profile","zh":"个人资料","ru":"Профиль"}[lang], callback_data="menu_profile"),
+    ]
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
     keyboard.add(*buttons)
-    await message.answer("Please select your language / لطفا زبان خود را انتخاب کنید / 请选择您的语言:", reply_markup=keyboard)
+    return keyboard
 
-@dp.callback_query_handler(lambda c: c.data.startswith('lang_'))
+@dp.message_handler(commands=["start"])
+async def cmd_start(message: types.Message):
+    user_id = message.from_user.id
+    # اگر پارامتر رفرال داره، اضافه کنیم
+    args = message.get_args()
+    if args:
+        ref_id = int(args)
+        if ref_id != user_id:
+            # اضافه کردن رفرال
+            if ref_id not in referrals:
+                referrals[ref_id] = set()
+            referrals[ref_id].add(user_id)
+            # ثبت در دیتا
+            ref_user = get_user_data(ref_id)
+            ref_user["referrals"].add(user_id)
+    # ست کردن زبان اولیه None و ارسال منو زبان
+    user_data.setdefault(user_id, {"lang": None, "balance":0, "deposits":0, "referrals": set(), "referral_deposits":0})
+    user_states[user_id] = {"state": STATE_NONE}
+    keyboard = types.InlineKeyboardMarkup(row_width=3)
+    for code, lang_name in LANGUAGES.items():
+        keyboard.insert(types.InlineKeyboardButton(text=lang_name, callback_data=f"lang_{code}"))
+    await message.answer(MESSAGES["choose_language"]["en"], reply_markup=keyboard)
+
+@dp.callback_query_handler(lambda c: c.data.startswith("lang_"))
 async def process_language(callback_query: types.CallbackQuery):
-    lang_code = callback_query.data[5:]
     user_id = callback_query.from_user.id
-    user_languages[user_id] = lang_code
-    await bot.answer_callback_query(callback_query.id)
-    await bot.send_message(user_id, WELCOME_MESSAGES.get(lang_code, "Welcome!"))
+    lang_code = callback_query.data[5:]
+    user = get_user_data(user_id)
+    user["lang"] = lang_code
+    user_states[user_id] = {"state": STATE_NONE}
 
-@app.route(WEBHOOK_PATH, methods=['POST'])
-async def webhook_handler():
-    data = await request.get_json()
-    update = Update.to_object(data)
-    Bot.set_current(bot)  # اینجا بوت رو تو کانتکست تنظیم می‌کنیم
-    await dp.process_update(update)
-    return Response(status=200)
+    await callback_query.answer()
+    await bot.send_message(user_id, MESSAGES["welcome"][lang_code])
 
-async def on_startup():
-    await bot.delete_webhook()
-    await bot.set_webhook(WEBHOOK_URL)
-    logging.info(f"Webhook set to {WEBHOOK_URL}")
+    # ارسال لینک دعوت اختصاصی
+    invite_link = f"https://t.me/{(await bot.get_me()).username}?start={user_id}"
+    await bot.send_message(user_id, f"Your invite link:\n{invite_link}")
 
-if __name__ == '__main__':
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(on_startup())
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    # ارسال منوی اصلی
+    await bot.send_message(user_id, get_message(user_id, "main_menu"), reply_markup=main_menu_keyboard(lang_code))
+
+@dp.callback_query_handler(lambda c: c.data.startswith("menu_"))
+async def process_menu(callback_query: types.CallbackQuery):
+    user_id = callback_query.from_user.id
+    user_state = user_states.get(user_id, {"state": STATE_NONE})
+    lang = get_user_data(user_id).get("lang") or "en"
+    data = callback_query.data
+
+    await callback_query.answer()
+
+    if data == "menu_deposit":
+        user_states[user_id] = {"state": STATE_DEPOSIT}
+        await bot.send_message(user_id, get_message(user_id, "deposit_prompt"))
+    elif data == "menu_market":
+        user_states[user_id] = {"state": STATE_MARKET_PRICE}
+        await bot.send_message(user_id, get_message(user_id, "market_prompt_price"))
+    elif data == "menu_withdraw":
+        user_states[user_id] = {"state": STATE_WITHDRAW}
+        await bot.send_message(user_id, get_message(user_id, "withdraw_prompt"))
+    elif data == "menu_profile":
+        user = get_user_data(user_id)
+        ref_count = len(user["referrals"])
+        bonus = int(user["referral_deposits"] * 0.02)
+        text = get_message(user_id, "profile_info",
+            balance=user["balance"],
+            deposits=user["deposits"],
+            ref_count=ref_count,
+            ref_deposits=user["referral_deposits"],
+            bonus=bonus
+        )
+        await bot.send_message(user_id, text, reply_markup=main_menu_keyboard(lang))
+
+@dp.message_handler()
+async def process_message(message: types.Message):
+    user_id = message.from_user.id
+    state_info = user_states.get(user_id)
+    if not state_info:
+        # اگه استیت نداشت منوی زبان رو بفرست
+        keyboard = types.InlineKeyboardMarkup(row_width=3)
+        for code, lang_name in LANGUAGES.items():
+            keyboard.insert(types.InlineKeyboardButton(text=lang_name, callback_data=f"lang_{code}"))
+        await message.answer(MESSAGES["choose_language"]["en"], reply_markup=keyboard)
+        return
+
+    state = state_info.get("state", STATE_NONE)
+    lang = get_user_data(user_id).get("lang") or "en"
+
+    # دریافت دیتا بسته به استیت
+    if state == STATE_DEPOSIT:
+        # بررسی عدد معتبر
+        try:
+            amount = int(message.text)
+            if amount <= 0:
+                raise ValueError
+        except:
+            await message.answer(get_message(user_id, "invalid_input"))
+            return
+        user = get_user_data(user_id)
+        user["balance"] += amount
+        user["deposits"] += amount
+
+        # اگر رفرال داشت، اضافه به زیرمجموعه‌ها
+        for ref_id, referred_set in referrals.items():
+            if user_id in referred_set:
+                ref_user = get_user_data(ref_id)
+                ref_user["referral_deposits"] += amount
+
+        user_states[user_id] = {"state": STATE_NONE}
+        await message.answer(get_message(user_id, "deposit_success", amount=amount, balance=user["balance"]), reply_markup=main_menu_keyboard(lang))
+
+    elif state == STATE_MARKET_PRICE:
+        # گرفتن بازه قیمت
+        parts = message.text.split()
+        if len(parts) != 2:
+            await message.answer(get_message(user_id, "invalid_input"))
+            return
+        try:
+            min_price = int(parts[0])
+            max_price = int(parts[1])
+            if min_price <= 0 or max_price <= 0 or min_price > max_price:
+                raise ValueError
+        except:
+            await message.answer(get_message(user_id, "invalid_input"))
+            return
+        user_states[user_id] = {"state": STATE_MARKET_QUANTITY, "min_price": min_price, "max_price": max_price}
+        await message.answer(get_message(user_id, "market_prompt_quantity"))
+
+    elif state == STATE_MARKET_QUANTITY:
+        # گرفتن تعداد خرید
+        try:
+            quantity = int(message.text)
+            if quantity <= 0:
+                raise ValueError
+        except:
+            await message.answer(get_message(user_id, "invalid_input"))
+            return
+        data = user_states[user_id]
+        min_price = data.get("min_price")
+        max_price = data.get("max_price")
+        # شبیه‌سازی خرید
+        user_states[user_id] = {"state": STATE_NONE}
+        await message.answer(get_message(user_id, "market_confirm", quantity=quantity, min_price=min_price, max_price=max_price), reply_markup=main_menu_keyboard(lang))
+
+    elif state == STATE_WITHDRAW:
+        try:
+            amount = int(message.text)
+            if amount <= 0:
+                raise ValueError
+        except:
+            await message.answer(get_message(user_id, "invalid_input"))
+            return
+        user = get_user_data(user_id)
+        if amount > user["balance"]:
+            await message.answer(get_message(user_id, "invalid_input"))
+            return
+        user["balance"] -= amount
+        user_states[user_id] = {"state": STATE_NONE}
+        await message.answer(get_message(user_id, "withdraw_success", amount=amount), reply_markup=main_menu_keyboard(lang))
+
+    else:
+        # اگر تو هیچ استیتی نبود، منوی اصلی رو بفرست
+        await message.answer(get_message(user_id, "main_menu"), reply_markup=main_menu_keyboard(lang))
+
+
+if __name__ == "__main__":
+    executor.start_polling(dp, skip_updates=True)
