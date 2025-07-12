@@ -5,28 +5,30 @@ from flask import Flask, request, Response
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import Update
 
-API_TOKEN = '7950008551:AAE-OOtnkR6zyQhyWAPbCueJmBhmlb9WecI'
+API_TOKEN = os.getenv("API_TOKEN")  # توکن ربات از متغیر محیطی خونده میشه
+WEBHOOK_PATH = f"/webhook/{API_TOKEN}"
+WEBHOOK_URL = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}{WEBHOOK_PATH}"
 
-# تنظیمات Flask و Aiogram
-app = Flask(__name__)
-bot = Bot(token=API_TOKEN)
-dp = Dispatcher(bot)
 logging.basicConfig(level=logging.INFO)
 
-# لیست زبان‌ها
+bot = Bot(token=API_TOKEN)
+dp = Dispatcher(bot)
+app = Flask(__name__)
+
 user_languages = {}
+
 LANGUAGES = {
     "en": "English 🇺🇸",
     "zh": "中文 🇨🇳",
     "ru": "Русский 🇷🇺"
 }
+
 WELCOME_MESSAGES = {
     "en": "Welcome! You chose English 🇺🇸",
     "zh": "欢迎！你选择了中文 🇨🇳",
     "ru": "Добро пожаловать! Вы выбрали русский 🇷🇺"
 }
 
-# هندلر شروع
 @dp.message_handler(commands=['start'])
 async def send_welcome(message: types.Message):
     keyboard = types.InlineKeyboardMarkup(row_width=3)
@@ -34,7 +36,6 @@ async def send_welcome(message: types.Message):
     keyboard.add(*buttons)
     await message.answer("Please select your language / لطفا زبان خود را انتخاب کنید / 请选择您的语言:", reply_markup=keyboard)
 
-# هندلر انتخاب زبان
 @dp.callback_query_handler(lambda c: c.data.startswith('lang_'))
 async def process_language(callback_query: types.CallbackQuery):
     lang_code = callback_query.data[5:]
@@ -43,20 +44,19 @@ async def process_language(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
     await bot.send_message(user_id, WELCOME_MESSAGES.get(lang_code, "Welcome!"))
 
-# مسیری که تلگرام بهش پیام POST می‌کنه
-@app.route(f"/webhook/{API_TOKEN}", methods=["POST"])
-def webhook():
+@app.route(WEBHOOK_PATH, methods=['POST'])
+def webhook_handler():
     update = Update.to_object(request.json)
     asyncio.create_task(dp.process_update(update))
-    return Response()
+    return Response(status=200)
 
-# راه‌اندازی اولیه
 async def on_startup():
-    webhook_url = f"https://{os.environ['RENDER_EXTERNAL_HOSTNAME']}/webhook/{API_TOKEN}"
-    await bot.set_webhook(webhook_url)
+    await bot.delete_webhook()
+    await bot.set_webhook(WEBHOOK_URL)
+    logging.info(f"Webhook set to {WEBHOOK_URL}")
 
-if __name__ == "__main__":
-    # ست کردن webhook و راه‌اندازی Flask
+if __name__ == '__main__':
     loop = asyncio.get_event_loop()
     loop.run_until_complete(on_startup())
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
