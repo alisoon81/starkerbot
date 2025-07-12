@@ -229,19 +229,68 @@ async def process_message(message: types.Message):
         await message.answer(get_message(user_id, "deposit_success", amount=amount, balance=user["balance"]), reply_markup=main_menu_keyboard(lang))
 
     elif state == STATE_MARKET_PRICE:
-    parts = message.text.split()
-    if len(parts) != 2:
-        await message.answer(get_message(user_id, "invalid_input"))
-        return
-    try:
-        min_price = int(parts[0])
-        max_price = int(parts[1])
-        if min_price <= 0 or max_price <= 0 or min_price > max_price:
-            raise ValueError("Invalid price range")
-    except Exception:
-        await message.answer(get_message(user_id, "invalid_input"))
-        return
-    user_states[user_id] = {"state": STATE_MARKET_QUANTITY, "min_price": min_price, "max_price": max_price}
-    await message.answer(get_message(user_id, "market_prompt_quantity"))
+        parts = message.text.split()
+        if len(parts) != 2:
+            await message.answer(get_message(user_id, "invalid_input"))
+            return
+        try:
+            min_price = int(parts[0])
+            max_price = int(parts[1])
+            if min_price <= 0 or max_price <= 0 or min_price > max_price:
+                raise ValueError("Invalid price range")
+        except Exception:
+            await message.answer(get_message(user_id, "invalid_input"))
+            return
+        user_states[user_id] = {"state": STATE_MARKET_QUANTITY, "min_price": min_price, "max_price": max_price}
+        await message.answer(get_message(user_id, "market_prompt_quantity"))
 
-      
+    elif state == STATE_MARKET_QUANTITY:
+        try:
+            quantity = int(message.text)
+            if quantity <= 0:
+                raise ValueError
+        except:
+            await message.answer(get_message(user_id, "invalid_input"))
+            return
+        state_info = user_states.get(user_id)
+        min_price = state_info.get("min_price")
+        max_price = state_info.get("max_price")
+        user_states[user_id] = {"state": STATE_NONE}
+        await message.answer(get_message(user_id, "market_confirm", quantity=quantity, min_price=min_price, max_price=max_price), reply_markup=main_menu_keyboard(lang))
+
+    elif state == STATE_WITHDRAW:
+        try:
+            amount = int(message.text)
+            if amount <= 0:
+                raise ValueError
+        except:
+            await message.answer(get_message(user_id, "invalid_input"))
+            return
+        user_states[user_id] = {"state": STATE_NONE}
+        await message.answer(get_message(user_id, "withdraw_success", amount=amount), reply_markup=main_menu_keyboard(lang))
+
+    else:
+        keyboard = types.InlineKeyboardMarkup(row_width=3)
+        for code, lang_name in LANGUAGES.items():
+            keyboard.insert(types.InlineKeyboardButton(text=lang_name, callback_data=f"lang_{code}"))
+        await message.answer(MESSAGES["choose_language"]["en"], reply_markup=keyboard)
+
+
+# اگر می‌خوای وب‌هوک رو هم داشته باشی، این کد رو بهش اضافه کن:
+async def on_startup(app):
+    await bot.set_webhook(WEBHOOK_URL)
+
+async def on_shutdown(app):
+    await bot.delete_webhook()
+
+app = web.Application()
+app.on_startup.append(on_startup)
+app.on_shutdown.append(on_shutdown)
+app.router.add_post(WEBHOOK_PATH, dp.webhook_handler())
+
+if __name__ == "__main__":
+    import asyncio
+    from aiogram import executor
+    executor.start_polling(dp)
+    # یا اگر از وب‌هوک استفاده می‌کنی:
+    # web.run_app(app, host="0.0.0.0", port=8000)
