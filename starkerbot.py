@@ -4,14 +4,9 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.types import ParseMode
 from quart import Quart, request
-import asyncio
 
 API_TOKEN = os.getenv("API_TOKEN")
-WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")
-
-if not API_TOKEN or not WEBHOOK_HOST:
-    raise RuntimeError("API_TOKEN and WEBHOOK_HOST environment variables must be set")
-
+WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")  # مثلا: https://yourapp.onrender.com
 WEBHOOK_PATH = f"/webhook/{API_TOKEN}"
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
@@ -45,8 +40,8 @@ user_data = {}
 
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
-    user_id = message.from_user.id
-    user_data[user_id] = {"lang": None}
+    logging.info(f"/start received from user {message.from_user.id}")
+    user_data[message.from_user.id] = {"lang": None}
     keyboard = types.InlineKeyboardMarkup(row_width=3)
     for code, name in LANGUAGES.items():
         keyboard.insert(types.InlineKeyboardButton(text=name, callback_data=f"lang_{code}"))
@@ -58,7 +53,6 @@ async def process_language(callback_query: types.CallbackQuery):
     lang_code = callback_query.data[5:]
     user_data[user_id]["lang"] = lang_code
     await bot.send_message(user_id, MESSAGES["welcome"][lang_code])
-    await callback_query.answer()  # برای بستن اسپینر تلگرام
 
 @app.route(WEBHOOK_PATH, methods=["POST"])
 async def webhook():
@@ -74,10 +68,7 @@ async def on_startup():
 
 @app.after_serving
 async def on_shutdown():
-    logging.info("Deleting webhook")
+    logging.info("Deleting webhook and cleaning up...")
     await bot.delete_webhook()
     await dp.storage.close()
     await dp.storage.wait_closed()
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
