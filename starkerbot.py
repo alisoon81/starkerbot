@@ -5,7 +5,7 @@ from flask import Flask, request, Response
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import Update
 
-API_TOKEN = 'توکن رباتت'
+API_TOKEN = '7950008551:AAE-OOtnkR6zyQhyWAPbCueJmBhmlb9WecI'
 
 # تنظیمات Flask و Aiogram
 app = Flask(__name__)
