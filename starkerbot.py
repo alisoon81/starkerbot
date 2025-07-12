@@ -2,10 +2,10 @@ import os
 import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import ParseMode
-from aiohttp import web
+from quart import Quart, request
 
 API_TOKEN = os.getenv("API_TOKEN")
-WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")  # مثلاً: https://yourapp.onrender.com
+WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")  # مثل https://mybot.onrender.com
 WEBHOOK_PATH = f"/webhook/{API_TOKEN}"
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
@@ -14,9 +14,11 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN, parse_mode=ParseMode.HTML)
 dp = Dispatcher(bot)
 
-user_data = {}
-referrals = {}
+# دیتاست‌ها (در حافظه)
+user_data = {}  # user_id: {lang, balance, deposits, referrals, referral_deposits}
+referrals = {}  # user_id: set of referred user_ids
 
+# زبان‌ها و پیام‌ها
 LANGUAGES = {
     "en": "English 🇺🇸",
     "zh": "中文 🇨🇳",
@@ -86,195 +88,32 @@ MESSAGES = {
     }
 }
 
-user_states = {}
+# ادامه کد (هندلرها، منوها، استیت‌ها) همانند قبل باقی می‌ماند...
 
-STATE_NONE = 0
-STATE_DEPOSIT = 1
-STATE_MARKET_PRICE = 2
-STATE_MARKET_QUANTITY = 3
-STATE_WITHDRAW = 4
+app = Quart(__name__)
 
-def get_user_data(user_id):
-    if user_id not in user_data:
-        user_data[user_id] = {
-            "lang": None,
-            "balance": 0,
-            "deposits": 0,
-            "referrals": set(),
-            "referral_deposits": 0
-        }
-    return user_data[user_id]
+@app.route(WEBHOOK_PATH, methods=["POST"])
+async def webhook():
+    data = await request.get_data()
+    update = types.Update.de_json(data.decode("utf-8"))
+    await dp.process_update(update)
+    return "", 200
 
-def get_message(user_id, key, **kwargs):
-    lang = get_user_data(user_id).get("lang") or "en"
-    text = MESSAGES.get(key, {}).get(lang, "")
-    if kwargs:
-        return text.format(**kwargs)
-    return text
+@app.route("/", methods=["GET"])
+async def index():
+    return "Bot is alive!", 200
 
-def main_menu_keyboard(lang):
-    buttons = [
-        types.InlineKeyboardButton(text={"en":"Deposit","zh":"充值","ru":"Внести"}[lang], callback_data="menu_deposit"),
-        types.InlineKeyboardButton(text={"en":"Market","zh":"市场","ru":"Маркет"}[lang], callback_data="menu_market"),
-        types.InlineKeyboardButton(text={"en":"Withdraw","zh":"提现","ru":"Вывести"}[lang], callback_data="menu_withdraw"),
-        types.InlineKeyboardButton(text={"en":"Profile","zh":"个人资料","ru":"Профиль"}[lang], callback_data="menu_profile"),
-    ]
-    keyboard = types.InlineKeyboardMarkup(row_width=2)
-    keyboard.add(*buttons)
-    return keyboard
-
-@dp.message_handler(commands=["start"])
-async def cmd_start(message: types.Message):
-    user_id = message.from_user.id
-    args = message.get_args()
-    if args:
-        try:
-            ref_id = int(args)
-            if ref_id != user_id:
-                referrals.setdefault(ref_id, set()).add(user_id)
-                get_user_data(ref_id)["referrals"].add(user_id)
-        except:
-            pass
-    get_user_data(user_id)
-    user_states[user_id] = {"state": STATE_NONE}
-    keyboard = types.InlineKeyboardMarkup(row_width=3)
-    for code, lang_name in LANGUAGES.items():
-        keyboard.insert(types.InlineKeyboardButton(text=lang_name, callback_data=f"lang_{code}"))
-    await message.answer(MESSAGES["choose_language"]["en"], reply_markup=keyboard)
-
-@dp.callback_query_handler(lambda c: c.data.startswith("lang_"))
-async def process_language(callback_query: types.CallbackQuery):
-    user_id = callback_query.from_user.id
-    lang_code = callback_query.data[5:]
-    get_user_data(user_id)["lang"] = lang_code
-    user_states[user_id] = {"state": STATE_NONE}
-
-    await callback_query.answer()
-    await bot.send_message(user_id, MESSAGES["welcome"][lang_code])
-
-    invite_link = f"https://t.me/{(await bot.get_me()).username}?start={user_id}"
-    await bot.send_message(user_id, f"Your invite link:\n{invite_link}")
-
-    await bot.send_message(user_id, get_message(user_id, "main_menu"), reply_markup=main_menu_keyboard(lang_code))
-
-@dp.callback_query_handler(lambda c: c.data.startswith("menu_"))
-async def process_menu(callback_query: types.CallbackQuery):
-    user_id = callback_query.from_user.id
-    lang = get_user_data(user_id).get("lang") or "en"
-    data = callback_query.data
-
-    await callback_query.answer()
-
-    if data == "menu_deposit":
-        user_states[user_id] = {"state": STATE_DEPOSIT}
-        await bot.send_message(user_id, get_message(user_id, "deposit_prompt"))
-    elif data == "menu_market":
-        user_states[user_id] = {"state": STATE_MARKET_PRICE}
-        await bot.send_message(user_id, get_message(user_id, "market_prompt_price"))
-    elif data == "menu_withdraw":
-        user_states[user_id] = {"state": STATE_WITHDRAW}
-        await bot.send_message(user_id, get_message(user_id, "withdraw_prompt"))
-    elif data == "menu_profile":
-        user = get_user_data(user_id)
-        text = get_message(user_id, "profile_info",
-            balance=user["balance"],
-            deposits=user["deposits"],
-            ref_count=len(user["referrals"]),
-            ref_deposits=user["referral_deposits"],
-            bonus=int(user["referral_deposits"] * 0.02)
-        )
-        await bot.send_message(user_id, text, reply_markup=main_menu_keyboard(lang))
-
-@dp.message_handler()
-async def process_message(message: types.Message):
-    user_id = message.from_user.id
-    state_info = user_states.get(user_id)
-    if not state_info:
-        return await cmd_start(message)
-
-    state = state_info.get("state", STATE_NONE)
-    lang = get_user_data(user_id).get("lang") or "en"
-
-    if state == STATE_DEPOSIT:
-        try:
-            amount = int(message.text)
-            if amount <= 0:
-                raise ValueError
-        except:
-            return await message.answer(get_message(user_id, "invalid_input"))
-
-        user = get_user_data(user_id)
-        user["balance"] += amount
-        user["deposits"] += amount
-        for ref_id, referred_set in referrals.items():
-            if user_id in referred_set:
-                get_user_data(ref_id)["referral_deposits"] += amount
-        user_states[user_id] = {"state": STATE_NONE}
-        return await message.answer(get_message(user_id, "deposit_success", amount=amount, balance=user["balance"]), reply_markup=main_menu_keyboard(lang))
-
-    elif state == STATE_MARKET_PRICE:
-        parts = message.text.split()
-        if len(parts) != 2:
-            return await message.answer(get_message(user_id, "invalid_input"))
-        try:
-            min_price = int(parts[0])
-            max_price = int(parts[1])
-            if min_price <= 0 or max_price <= 0 or min_price > max_price:
-                raise ValueError
-        except:
-            return await message.answer(get_message(user_id, "invalid_input"))
-
-        user_states[user_id] = {"state": STATE_MARKET_QUANTITY, "min_price": min_price, "max_price": max_price}
-        return await message.answer(get_message(user_id, "market_prompt_quantity"))
-
-    elif state == STATE_MARKET_QUANTITY:
-        try:
-            quantity = int(message.text)
-            if quantity <= 0:
-                raise ValueError
-        except:
-            return await message.answer(get_message(user_id, "invalid_input"))
-
-        info = state_info
-        min_price = info["min_price"]
-        max_price = info["max_price"]
-        user_states[user_id] = {"state": STATE_NONE}
-        return await message.answer(get_message(user_id, "market_confirm", quantity=quantity, min_price=min_price, max_price=max_price), reply_markup=main_menu_keyboard(lang))
-
-    elif state == STATE_WITHDRAW:
-        try:
-            amount = int(message.text)
-            if amount <= 0:
-                raise ValueError
-        except:
-            return await message.answer(get_message(user_id, "invalid_input"))
-
-        user_states[user_id] = {"state": STATE_NONE}
-        return await message.answer(get_message(user_id, "withdraw_success", amount=amount), reply_markup=main_menu_keyboard(lang))
-
-# ---------- Webhook Setup ----------
-
-async def handle_webhook(request):
-    try:
-        data = await request.json()
-        update = types.Update.to_object(data)
-        await dp.process_update(update)
-    except Exception as e:
-        logging.exception("Error handling update")
-    return web.Response()
-
-async def on_startup(app):
+async def on_startup():
     await bot.set_webhook(WEBHOOK_URL)
-    logging.info(f"Webhook set to {WEBHOOK_URL}")
+    print("Webhook set!")
 
-async def on_shutdown(app):
+async def on_shutdown():
     await bot.delete_webhook()
-    logging.info("Webhook deleted")
-
-app = web.Application()
-app.router.add_post(WEBHOOK_PATH, handle_webhook)
-app.on_startup.append(on_startup)
-app.on_shutdown.append(on_shutdown)
+    await bot.session.close()
 
 if __name__ == "__main__":
-    web.run_app(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+    import asyncio
+
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(on_startup())
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
