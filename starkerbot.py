@@ -1,7 +1,14 @@
-from aiogram import Bot, Dispatcher, executor, types
+import logging
+import asyncio
+import os
+
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import Update
+from flask import Flask, request, Response
 
 API_TOKEN = '7950008551:AAE-OOtnkR6zyQhyWAPbCueJmBhmlb9WecI'
 
+# حذف پراکسی چون در Render استفاده نمی‌کنیم
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
 
@@ -19,6 +26,9 @@ WELCOME_MESSAGES = {
     "ru": "Добро пожаловать! Вы выбрали русский 🇷🇺"
 }
 
+app = Flask(__name__)
+logging.basicConfig(level=logging.INFO)
+
 @dp.message_handler(commands=['start'])
 async def send_welcome(message: types.Message):
     keyboard = types.InlineKeyboardMarkup(row_width=3)
@@ -35,5 +45,26 @@ async def process_language(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
     await bot.send_message(user_id, WELCOME_MESSAGES.get(lang_code, "Welcome!"))
 
+WEBHOOK_HOST = os.getenv('WEBHOOK_HOST', 'https://yourdomain.com')  # آدرس دامنه‌ات را اینجا بگذار
+WEBHOOK_PATH = f"/webhook/{API_TOKEN}"
+WEBHOOK_URL = WEBHOOK_HOST + WEBHOOK_PATH
+
+@app.route(WEBHOOK_PATH, methods=['POST'])
+def webhook_handler():
+    update = Update.to_object(request.json)
+    asyncio.create_task(dp.process_update(update))
+    return Response(status=200)
+
+async def on_startup():
+    logging.info("Setting webhook")
+    await bot.set_webhook(WEBHOOK_URL)
+
+async def on_shutdown():
+    logging.info("Removing webhook")
+    await bot.delete_webhook()
+
 if __name__ == '__main__':
-    executor.start_polling(dp, skip_updates=True)
+    port = int(os.getenv('PORT', 5000))
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(on_startup())
+    app.run(host='0.0.0.0', port=port)
