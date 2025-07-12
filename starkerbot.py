@@ -1,12 +1,17 @@
 import os
 import logging
-from aiogram import Bot, Dispatcher, executor, types
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import ParseMode
+from aiohttp import web
 
-API_TOKEN = os.getenv("API_TOKEN")  # توکن ربات
+API_TOKEN = os.getenv("API_TOKEN")
+WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")  # مثل https://mybot.onrender.com
+WEBHOOK_PATH = f"/webhook/{API_TOKEN}"
+WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
 logging.basicConfig(level=logging.INFO)
 
-bot = Bot(token=API_TOKEN)
+bot = Bot(token=API_TOKEN, parse_mode=ParseMode.HTML)
 dp = Dispatcher(bot)
 
 # دیتاست‌ها (در حافظه)
@@ -86,7 +91,6 @@ MESSAGES = {
 # ذخیره حالت‌های مکالمه (state) برای ورودی کاربر
 user_states = {}  # user_id: current state, and temp data
 
-
 # استیت‌ها
 STATE_NONE = 0
 STATE_DEPOSIT = 1
@@ -126,19 +130,18 @@ def main_menu_keyboard(lang):
 @dp.message_handler(commands=["start"])
 async def cmd_start(message: types.Message):
     user_id = message.from_user.id
-    # اگر پارامتر رفرال داره، اضافه کنیم
     args = message.get_args()
     if args:
-        ref_id = int(args)
-        if ref_id != user_id:
-            # اضافه کردن رفرال
-            if ref_id not in referrals:
-                referrals[ref_id] = set()
-            referrals[ref_id].add(user_id)
-            # ثبت در دیتا
-            ref_user = get_user_data(ref_id)
-            ref_user["referrals"].add(user_id)
-    # ست کردن زبان اولیه None و ارسال منو زبان
+        try:
+            ref_id = int(args)
+            if ref_id != user_id:
+                if ref_id not in referrals:
+                    referrals[ref_id] = set()
+                referrals[ref_id].add(user_id)
+                ref_user = get_user_data(ref_id)
+                ref_user["referrals"].add(user_id)
+        except:
+            pass
     user_data.setdefault(user_id, {"lang": None, "balance":0, "deposits":0, "referrals": set(), "referral_deposits":0})
     user_states[user_id] = {"state": STATE_NONE}
     keyboard = types.InlineKeyboardMarkup(row_width=3)
@@ -157,11 +160,9 @@ async def process_language(callback_query: types.CallbackQuery):
     await callback_query.answer()
     await bot.send_message(user_id, MESSAGES["welcome"][lang_code])
 
-    # ارسال لینک دعوت اختصاصی
     invite_link = f"https://t.me/{(await bot.get_me()).username}?start={user_id}"
     await bot.send_message(user_id, f"Your invite link:\n{invite_link}")
 
-    # ارسال منوی اصلی
     await bot.send_message(user_id, get_message(user_id, "main_menu"), reply_markup=main_menu_keyboard(lang_code))
 
 @dp.callback_query_handler(lambda c: c.data.startswith("menu_"))
@@ -200,7 +201,6 @@ async def process_message(message: types.Message):
     user_id = message.from_user.id
     state_info = user_states.get(user_id)
     if not state_info:
-        # اگه استیت نداشت منوی زبان رو بفرست
         keyboard = types.InlineKeyboardMarkup(row_width=3)
         for code, lang_name in LANGUAGES.items():
             keyboard.insert(types.InlineKeyboardButton(text=lang_name, callback_data=f"lang_{code}"))
@@ -210,9 +210,7 @@ async def process_message(message: types.Message):
     state = state_info.get("state", STATE_NONE)
     lang = get_user_data(user_id).get("lang") or "en"
 
-    # دریافت دیتا بسته به استیت
     if state == STATE_DEPOSIT:
-        # بررسی عدد معتبر
         try:
             amount = int(message.text)
             if amount <= 0:
@@ -223,18 +221,14 @@ async def process_message(message: types.Message):
         user = get_user_data(user_id)
         user["balance"] += amount
         user["deposits"] += amount
-
-        # اگر رفرال داشت، اضافه به زیرمجموعه‌ها
         for ref_id, referred_set in referrals.items():
             if user_id in referred_set:
                 ref_user = get_user_data(ref_id)
                 ref_user["referral_deposits"] += amount
-
         user_states[user_id] = {"state": STATE_NONE}
         await message.answer(get_message(user_id, "deposit_success", amount=amount, balance=user["balance"]), reply_markup=main_menu_keyboard(lang))
 
     elif state == STATE_MARKET_PRICE:
-        # گرفتن بازه قیمت
         parts = message.text.split()
         if len(parts) != 2:
             await message.answer(get_message(user_id, "invalid_input"))
@@ -243,49 +237,4 @@ async def process_message(message: types.Message):
             min_price = int(parts[0])
             max_price = int(parts[1])
             if min_price <= 0 or max_price <= 0 or min_price > max_price:
-                raise ValueError
-        except:
-            await message.answer(get_message(user_id, "invalid_input"))
-            return
-        user_states[user_id] = {"state": STATE_MARKET_QUANTITY, "min_price": min_price, "max_price": max_price}
-        await message.answer(get_message(user_id, "market_prompt_quantity"))
-
-    elif state == STATE_MARKET_QUANTITY:
-        # گرفتن تعداد خرید
-        try:
-            quantity = int(message.text)
-            if quantity <= 0:
-                raise ValueError
-        except:
-            await message.answer(get_message(user_id, "invalid_input"))
-            return
-        data = user_states[user_id]
-        min_price = data.get("min_price")
-        max_price = data.get("max_price")
-        # شبیه‌سازی خرید
-        user_states[user_id] = {"state": STATE_NONE}
-        await message.answer(get_message(user_id, "market_confirm", quantity=quantity, min_price=min_price, max_price=max_price), reply_markup=main_menu_keyboard(lang))
-
-    elif state == STATE_WITHDRAW:
-        try:
-            amount = int(message.text)
-            if amount <= 0:
-                raise ValueError
-        except:
-            await message.answer(get_message(user_id, "invalid_input"))
-            return
-        user = get_user_data(user_id)
-        if amount > user["balance"]:
-            await message.answer(get_message(user_id, "invalid_input"))
-            return
-        user["balance"] -= amount
-        user_states[user_id] = {"state": STATE_NONE}
-        await message.answer(get_message(user_id, "withdraw_success", amount=amount), reply_markup=main_menu_keyboard(lang))
-
-    else:
-        # اگر تو هیچ استیتی نبود، منوی اصلی رو بفرست
-        await message.answer(get_message(user_id, "main_menu"), reply_markup=main_menu_keyboard(lang))
-
-
-if __name__ == "__main__":
-    executor.start_polling(dp, skip_updates=True)
+                raise
