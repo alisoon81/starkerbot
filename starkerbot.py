@@ -229,12 +229,19 @@ async def process_message(message: types.Message):
         await message.answer(get_message(user_id, "deposit_success", amount=amount, balance=user["balance"]), reply_markup=main_menu_keyboard(lang))
 
     elif state == STATE_MARKET_PRICE:
-        parts = message.text.split()
-        if len(parts) != 2:
-            await message.answer(get_message(user_id, "invalid_input"))
-            return
-        try:
-            min_price = int(parts[0])
-            max_price = int(parts[1])
-            if min_price <= 0 or max_price <= 0 or min_price > max_price:
-                raise
+    parts = message.text.split()
+    if len(parts) != 2:
+        await message.answer(get_message(user_id, "invalid_input"))
+        return
+    try:
+        min_price = int(parts[0])
+        max_price = int(parts[1])
+        if min_price <= 0 or max_price <= 0 or min_price > max_price:
+            raise ValueError("Invalid price range")
+    except Exception:
+        await message.answer(get_message(user_id, "invalid_input"))
+        return
+    user_states[user_id] = {"state": STATE_MARKET_QUANTITY, "min_price": min_price, "max_price": max_price}
+    await message.answer(get_message(user_id, "market_prompt_quantity"))
+
+      
