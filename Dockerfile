@@ -9,4 +9,4 @@ COPY . /app
 RUN pip install --no-cache-dir -r requirements.txt
 
 # فرمان اجرای ربات
-CMD ["python", "bot.py"]
+CMD ["python", "starkerbot.py"]
