@@ -1,11 +1,11 @@
 import os
 import logging
-from quart import Quart, request, Response
 import asyncio
+from quart import Quart, request, Response
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import Update
 
-API_TOKEN = os.getenv("API_TOKEN")  # توکن ربات از متغیر محیطی خونده میشه
+API_TOKEN = os.getenv("API_TOKEN")  # توکن ربات از متغیر محیطی خوانده میشه
 WEBHOOK_PATH = f"/webhook/{API_TOKEN}"
 WEBHOOK_URL = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}{WEBHOOK_PATH}"
 
@@ -48,6 +48,7 @@ async def process_language(callback_query: types.CallbackQuery):
 async def webhook_handler():
     data = await request.get_json()
     update = Update.to_object(data)
+    Bot.set_current(bot)  # اینجا بوت رو تو کانتکست تنظیم می‌کنیم
     await dp.process_update(update)
     return Response(status=200)
 
@@ -57,5 +58,7 @@ async def on_startup():
     logging.info(f"Webhook set to {WEBHOOK_URL}")
 
 if __name__ == '__main__':
-    asyncio.run(on_startup())
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(on_startup())
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
