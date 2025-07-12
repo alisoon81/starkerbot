@@ -2,9 +2,7 @@ from aiogram import Bot, Dispatcher, executor, types
 
 API_TOKEN = '7950008551:AAE-OOtnkR6zyQhyWAPbCueJmBhmlb9WecI'
 
-PROXY_URL = 'socks5://127.0.0.1:1080'  # یا هر پراکسی دیگر، مثلاً: http://127.0.0.1:8889
-
-bot = Bot(token=API_TOKEN, proxy=PROXY_URL)
+bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
 
 user_languages = {}
