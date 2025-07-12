@@ -1,7 +1,7 @@
 import os
 import logging
+from quart import Quart, request, Response
 import asyncio
-from flask import Flask, request, Response
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import Update
 
@@ -13,7 +13,7 @@ logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
-app = Flask(__name__)
+app = Quart(__name__)
 
 user_languages = {}
 
@@ -45,9 +45,10 @@ async def process_language(callback_query: types.CallbackQuery):
     await bot.send_message(user_id, WELCOME_MESSAGES.get(lang_code, "Welcome!"))
 
 @app.route(WEBHOOK_PATH, methods=['POST'])
-def webhook_handler():
-    update = Update.to_object(request.json)
-    asyncio.create_task(dp.process_update(update))
+async def webhook_handler():
+    data = await request.get_json()
+    update = Update.to_object(data)
+    await dp.process_update(update)
     return Response(status=200)
 
 async def on_startup():
@@ -56,7 +57,5 @@ async def on_startup():
     logging.info(f"Webhook set to {WEBHOOK_URL}")
 
 if __name__ == '__main__':
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(on_startup())
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    asyncio.run(on_startup())
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
