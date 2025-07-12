@@ -7,7 +7,11 @@ from quart import Quart, request
 import asyncio
 
 API_TOKEN = os.getenv("API_TOKEN")
-WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")  # مثلا https://mybot.onrender.com
+WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")
+
+if not API_TOKEN or not WEBHOOK_HOST:
+    raise RuntimeError("API_TOKEN and WEBHOOK_HOST environment variables must be set")
+
 WEBHOOK_PATH = f"/webhook/{API_TOKEN}"
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
@@ -18,7 +22,6 @@ storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 app = Quart(__name__)
 
-# زبان‌ها
 LANGUAGES = {
     "en": "English 🇺🇸",
     "zh": "中文 🇨🇳",
@@ -55,6 +58,7 @@ async def process_language(callback_query: types.CallbackQuery):
     lang_code = callback_query.data[5:]
     user_data[user_id]["lang"] = lang_code
     await bot.send_message(user_id, MESSAGES["welcome"][lang_code])
+    await callback_query.answer()  # برای بستن اسپینر تلگرام
 
 @app.route(WEBHOOK_PATH, methods=["POST"])
 async def webhook():
@@ -65,10 +69,12 @@ async def webhook():
 
 @app.before_serving
 async def on_startup():
+    logging.info(f"Setting webhook: {WEBHOOK_URL}")
     await bot.set_webhook(WEBHOOK_URL)
 
 @app.after_serving
 async def on_shutdown():
+    logging.info("Deleting webhook")
     await bot.delete_webhook()
     await dp.storage.close()
     await dp.storage.wait_closed()
