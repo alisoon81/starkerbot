@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: starkerbot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python starkerbot.py
+    plan: free
+    envVars:
+      - key: API_TOKEN
+        value: YOUR_BOT_TOKEN
