@@ -1,9 +1,11 @@
-from aiohttp import web
-
-async def handle(request):
-    return web.Response(text="Bot is running (fake server for Render)")
+import socket
 
 def start_fake_server():
-    app = web.Application()
-    app.router.add_get('/', handle)
-    web.run_app(app, port=8080)
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(('0.0.0.0', 8080))  # پورت مورد نیاز Render
+    s.listen(1)
+    print("Fake server is running on port 8080...")
+    while True:
+        conn, addr = s.accept()
+        conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nBot is running.")
+        conn.close()
