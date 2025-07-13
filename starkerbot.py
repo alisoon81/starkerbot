@@ -1,10 +1,14 @@
 import logging
+import os
+import threading
 from aiogram import Bot, Dispatcher, types, executor
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
-import os
+from fake_server import start_fake_server  # سرور فیک برای باز نگه‌داشتن پورت
+
+# اجرای سرور فیک در بک‌گراند (برای اینکه Render نخوابه)
+threading.Thread(target=start_fake_server).start()
 
 API_TOKEN = os.getenv("API_TOKEN")
-
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=API_TOKEN)
@@ -48,15 +52,10 @@ async def process_language(callback_query: types.CallbackQuery):
     user_data[user_id]["lang"] = lang_code
     await bot.send_message(user_id, MESSAGES["welcome"][lang_code])
 
+# حذف Webhook موقع شروع ربات
 async def on_startup(dp):
     await bot.delete_webhook(drop_pending_updates=True)
     logging.info("✅ Webhook حذف شد. در حال اجرای polling...")
 
 if __name__ == "__main__":
-    from fake_server import start_fake_server  # 👈 فایل fake_server.py که پایین نوشتم
-    import threading
-
-    # اجرای یک سرور جعلی روی پورت برای جلوگیری از ارور Render
-    threading.Thread(target=start_fake_server).start()
-
     executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
