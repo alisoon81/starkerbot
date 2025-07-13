@@ -48,5 +48,10 @@ async def process_language(callback_query: types.CallbackQuery):
     user_data[user_id]["lang"] = lang_code
     await bot.send_message(user_id, MESSAGES["welcome"][lang_code])
 
+# 🧹 حذف Webhook هنگام شروع
+async def on_startup(dp):
+    await bot.delete_webhook(drop_pending_updates=True)
+    logging.info("✅ Webhook حذف شد. در حال اجرای polling...")
+
 if __name__ == "__main__":
-    executor.start_polling(dp, skip_updates=True)
+    executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
