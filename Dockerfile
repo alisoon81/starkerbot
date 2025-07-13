@@ -1,12 +1,13 @@
-# استفاده از ایمیج پایتون رسمی
 FROM python:3.10-slim
 
-# کپی کردن فایل‌ها به داخل کانتینر
 WORKDIR /app
-COPY . /app
 
-# نصب پیش‌نیازها
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# فرمان اجرای ربات
-CMD ["python", "starkerbot.py"]
+COPY . .
+
+# اضافه کردن متغیر محیطی
+ENV PYTHONUNBUFFERED=1
+
+CMD ["python", "main.py"]
