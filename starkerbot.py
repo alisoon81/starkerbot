@@ -3,20 +3,17 @@ import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.types import ParseMode
-from quart import Quart, request
+from aiogram.utils import executor
 
-API_TOKEN = os.getenv("API_TOKEN")
-WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")  # مثلا: https://yourapp.onrender.com
-WEBHOOK_PATH = f"/webhook/{API_TOKEN}"
-WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
+API_TOKEN = os.getenv("API_TOKEN")  # توی Render باید تو ENV اضافه شده باشه
 
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=API_TOKEN, parse_mode=ParseMode.HTML)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
-app = Quart(__name__)
 
+# زبان‌ها
 LANGUAGES = {
     "en": "English 🇺🇸",
     "zh": "中文 🇨🇳",
@@ -40,8 +37,8 @@ user_data = {}
 
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
-    logging.info(f"/start received from user {message.from_user.id}")
-    user_data[message.from_user.id] = {"lang": None}
+    user_id = message.from_user.id
+    user_data[user_id] = {"lang": None}
     keyboard = types.InlineKeyboardMarkup(row_width=3)
     for code, name in LANGUAGES.items():
         keyboard.insert(types.InlineKeyboardButton(text=name, callback_data=f"lang_{code}"))
@@ -54,21 +51,5 @@ async def process_language(callback_query: types.CallbackQuery):
     user_data[user_id]["lang"] = lang_code
     await bot.send_message(user_id, MESSAGES["welcome"][lang_code])
 
-@app.route(WEBHOOK_PATH, methods=["POST"])
-async def webhook():
-    request_body_dict = await request.get_json()
-    update = types.Update.to_object(request_body_dict)
-    await dp.process_update(update)
-    return "ok"
-
-@app.before_serving
-async def on_startup():
-    logging.info(f"Setting webhook: {WEBHOOK_URL}")
-    await bot.set_webhook(WEBHOOK_URL)
-
-@app.after_serving
-async def on_shutdown():
-    logging.info("Deleting webhook and cleaning up...")
-    await bot.delete_webhook()
-    await dp.storage.close()
-    await dp.storage.wait_closed()
+if __name__ == "__main__":
+    executor.start_polling(dp, skip_updates=True)
