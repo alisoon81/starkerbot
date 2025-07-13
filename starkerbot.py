@@ -1,19 +1,16 @@
-import os
 import logging
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, executor
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
-from aiogram.types import ParseMode
-from aiogram.utils import executor
+import os
 
-API_TOKEN = os.getenv("API_TOKEN")  # توی Render باید تو ENV اضافه شده باشه
+API_TOKEN = os.getenv("API_TOKEN")
 
 logging.basicConfig(level=logging.INFO)
 
-bot = Bot(token=API_TOKEN, parse_mode=ParseMode.HTML)
+bot = Bot(token=API_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
-# زبان‌ها
 LANGUAGES = {
     "en": "English 🇺🇸",
     "zh": "中文 🇨🇳",
