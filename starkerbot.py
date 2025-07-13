@@ -2,6 +2,8 @@ import logging
 from aiogram import Bot, Dispatcher, types, executor
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 import os
+import asyncio
+from aiohttp import web  # برای سرور فیک
 
 API_TOKEN = os.getenv("API_TOKEN")
 
@@ -48,10 +50,30 @@ async def process_language(callback_query: types.CallbackQuery):
     user_data[user_id]["lang"] = lang_code
     await bot.send_message(user_id, MESSAGES["welcome"][lang_code])
 
-# 🧹 حذف Webhook هنگام شروع
+# 🭳 حذف Webhook هنگام شروع
 async def on_startup(dp):
     await bot.delete_webhook(drop_pending_updates=True)
     logging.info("✅ Webhook حذف شد. در حال اجرای polling...")
 
+# ⚖️ سرور فیک برای Render (port binding)
+async def start_fake_server():
+    async def handle(request):
+        return web.Response(text="Bot is running.")
+    app = web.Application()
+    app.router.add_get("/", handle)
+    port = int(os.environ.get("PORT", 10000))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logging.info(f"🌐 Fake server started on port {port}")
+
+# اجرای همزمان bot + fake server
+async def main():
+    await asyncio.gather(
+        start_fake_server(),
+        dp.start_polling(on_startup=on_startup)
+    )
+
 if __name__ == "__main__":
-    executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
+    asyncio.run(main())
