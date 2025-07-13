@@ -8,20 +8,21 @@ from aiogram.dispatcher.filters.state import State, StatesGroup
 
 # -- fake_server.py باید یه سرور فیک راه بندازه برای نگه داشتن پورت روی Render
 # اگر نداریش حذفش کن یا یه فانکشن خالی بذار --
-
 from fake_server import start_fake_server
 
 # اجرای سرور فیک در بک‌گراند (برای Render)
-threading.Thread(target=start_fake_server).start()
+threading.Thread(target=start_fake_server, daemon=True).start()
 
-API_TOKEN = os.getenv("API_TOKEN")  # تو محیطت تنظیم کن
+API_TOKEN = os.getenv("API_TOKEN")
+if not API_TOKEN:
+    raise RuntimeError("API_TOKEN environment variable is not set!")
+
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=API_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
-# زبان‌ها و پیام‌ها
 LANGUAGES = {
     "en": "English 🇺🇸",
     "zh": "中文 🇨🇳",
@@ -93,7 +94,6 @@ MESSAGES = {
 
 user_data = {}
 
-# حالت‌ها برای FSM
 class Form(StatesGroup):
     deposit_amount = State()
     market_price_range = State()
@@ -130,17 +130,19 @@ async def process_language(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     lang_code = callback_query.data[5:]
     user_data[user_id]["lang"] = lang_code
-
-    # لینک اختصاصی ساده با user_id به عنوان کد ارجاع
     referral_link = f"https://t.me/YourBot?start={user_id}"
-
     await bot.send_message(user_id, MESSAGES["welcome"][lang_code])
     await bot.send_message(user_id, f"Your referral link:\n{referral_link}", reply_markup=main_menu_kb(lang_code))
+    await callback_query.answer()  # جواب دادن به callback query
 
 @dp.callback_query_handler(lambda c: c.data.startswith("tab_"))
 async def tab_handler(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
-    lang = user_data[user_id]["lang"]
+    lang = user_data.get(user_id, {}).get("lang")
+    if not lang:
+        await callback_query.answer("Please select a language first.", show_alert=True)
+        return
+
     data = callback_query.data
 
     if data == "tab_deposit":
@@ -170,11 +172,12 @@ async def tab_handler(callback_query: types.CallbackQuery):
             f"Your 2% referral bonus (not withdrawable): {bonus}"
         )
         await bot.send_message(user_id, profile_text)
+    await callback_query.answer()  # جواب دادن به callback query
 
 @dp.message_handler(state=Form.deposit_amount)
 async def deposit_stars(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
-    lang = user_data[user_id]["lang"]
+    lang = user_data.get(user_id, {}).get("lang", "en")
     try:
         amount = int(message.text)
         if amount <= 0:
@@ -190,7 +193,7 @@ async def deposit_stars(message: types.Message, state: FSMContext):
 @dp.message_handler(state=Form.market_price_range)
 async def market_price_range(message: types.Message, state: FSMContext):
     await state.update_data(price_range=message.text)
-    lang = user_data[message.from_user.id]["lang"]
+    lang = user_data.get(message.from_user.id, {}).get("lang", "en")
     await message.answer(MESSAGES["market_quantity_ask"][lang])
     await Form.next()
 
@@ -199,7 +202,7 @@ async def market_quantity(message: types.Message, state: FSMContext):
     data = await state.get_data()
     price_range = data.get("price_range")
     quantity = message.text
-    lang = user_data[message.from_user.id]["lang"]
+    lang = user_data.get(message.from_user.id, {}).get("lang", "en")
     await message.answer(MESSAGES["market_order_received"][lang].format(quantity=quantity, price_range=price_range))
     await state.finish()
     await message.answer(MESSAGES["back_to_menu"][lang], reply_markup=main_menu_kb(lang))
@@ -207,7 +210,7 @@ async def market_quantity(message: types.Message, state: FSMContext):
 @dp.message_handler(state=Form.withdraw_amount)
 async def withdraw_stars(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
-    lang = user_data[user_id]["lang"]
+    lang = user_data.get(user_id, {}).get("lang", "en")
     try:
         amount = int(message.text)
         if amount <= 0 or amount > user_data[user_id]["stars"]:
@@ -220,8 +223,6 @@ async def withdraw_stars(message: types.Message, state: FSMContext):
     await state.finish()
     await message.answer(MESSAGES["back_to_menu"][lang], reply_markup=main_menu_kb(lang))
 
-
-# حذف Webhook موقع شروع ربات
 async def on_startup(dp):
     await bot.delete_webhook(drop_pending_updates=True)
     logging.info("✅ Webhook حذف شد. در حال اجرای polling...")
