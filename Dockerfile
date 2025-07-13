@@ -10,4 +10,4 @@ COPY . .
 # اضافه کردن متغیر محیطی
 ENV PYTHONUNBUFFERED=1
 
-CMD ["python", "main.py"]
+CMD ["python", "starkerbot.py"]
